@@ -19,11 +19,12 @@ enum class Operation {
 };
 
 
-// Structure to represent a Request
+// Structure to represent a UUID
 struct UUID {
     std::array<uint8_t, 16> id;
 };
 
+// Structure to represent a Request
 struct Request {
     UUID user_id;
     uint8_t version;
