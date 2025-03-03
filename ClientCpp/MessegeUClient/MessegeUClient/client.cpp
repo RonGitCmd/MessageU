@@ -6,14 +6,49 @@
 #include <cryptopp/base64.h>
 #include <cryptopp/filters.h>
 #include "protocol_tools.h"
-
-
+#include "Base64Wrapper.h"
+#include "AESWrapper.h"
+#include "RSAWrapper.h"
 
 namespace fs = std::filesystem;
 namespace asio = boost::asio;
 using asio::ip::tcp;
-
+const uint8_t VERSION = 1;
 const std::string MY_INFO = (fs::current_path().u8string() + "\\my.info");
+const std::string SERVER_INFO = (fs::current_path().u8string() + "\\server.info");
+
+
+tcp::socket connect_to_server(  asio::io_context& io_context)
+{
+    std::ifstream ifs(SERVER_INFO);
+    if (!ifs) {
+        throw std::runtime_error("Failed to open server info file: " + SERVER_INFO);
+    }
+
+    std::string serverLine;
+    if (!std::getline(ifs, serverLine)) {
+        throw std::runtime_error("Failed to read server address from file");
+    }
+
+    auto colonPos = serverLine.find(':');
+    if (colonPos == std::string::npos) {
+        throw std::runtime_error("Invalid server address format. Expected 'ip:port'.");
+    }
+
+    std::string ip = serverLine.substr(0, colonPos);
+    std::string port = serverLine.substr(colonPos + 1);
+
+    // 3) Use Boost.Asio to resolve and connect
+    tcp::resolver resolver(io_context);
+    tcp::resolver::results_type endpoints = resolver.resolve(ip, port);
+
+    tcp::socket socket(io_context);
+    asio::connect(socket, endpoints);
+
+    return socket; // Return the connected socket
+}
+
+
 /// <summary>
 /// Used for parsing responses from serever
 /// Handled dynamic message size.
@@ -56,7 +91,7 @@ std::vector<uint8_t> read_socket(tcp::socket& client_socket) {
 }
 
 
-void store_my_info(const std::string& name, const UUID& uuid, const char* aeskey) {
+void store_my_info(const std::string& name, const UUID& uuid, std::string rsakey) {
     std::ofstream ofs(MY_INFO, std::ios::out);
     if (!ofs) {
         throw std::runtime_error("Failed to open file for writing");
@@ -74,19 +109,15 @@ void store_my_info(const std::string& name, const UUID& uuid, const char* aeskey
     ofs << uuid_hex << "\n";
 
     // Base64 encode the AES key.
-    const size_t aeskey_length = 16;
-    std::string aeskey_b64;
-    CryptoPP::StringSource ss_key(
-        reinterpret_cast<const uint8_t*>(aeskey), aeskey_length, true,
-        new CryptoPP::Base64Encoder(new CryptoPP::StringSink(aeskey_b64), false)  // 'false' disables line breaks
-    );
-    ofs << aeskey_b64 << "\n";
+    std::string rsakey_b64 = Base64Wrapper::encode(rsakey);
+
+    ofs << rsakey_b64 << "\n";
 
     ofs.close();
 }
 
 
-void read_my_info(std::string& name, UUID& uuid, char* aeskey) {
+std::string read_my_info(std::string& name, UUID& uuid) {
     // Open the file for reading.
     std::ifstream ifs(MY_INFO, std::ios::in);
     if (!ifs)
@@ -116,24 +147,87 @@ void read_my_info(std::string& name, UUID& uuid, char* aeskey) {
         uuid.id[i] = static_cast<uint8_t>(decoded_uuid[i]);
 
     // Read the third line: AES key in Base64 encoding.
-    std::string aeskey_b64;
-    if (!std::getline(ifs, aeskey_b64))
+    std::string rsakey_b64;
+    if (!std::getline(ifs, rsakey_b64))
         throw std::runtime_error("Failed to read AES key from file");
 
     // Decode the Base64 string to obtain the raw AES key bytes.
-    std::string decoded_aes;
-    CryptoPP::StringSource ss_aes(
-        aeskey_b64, true,
-        new CryptoPP::Base64Decoder(new CryptoPP::StringSink(decoded_aes))
-    );
-    if (decoded_aes.size() != 16)
-        throw std::runtime_error("Decoded AES key is not 16 bytes");
+    std::string decoded_rsa = Base64Wrapper::decode(rsakey_b64);
+  
+    return decoded_rsa;
 
-    // Copy the decoded AES key bytes into the provided aeskey pointer.
-    std::memcpy(aeskey, decoded_aes.data(), 16);
 }
 
 int main()
 {
-	
+    std::string username;
+    UUID uuid;
+    bool myinfo = false;
+    std::unique_ptr<RSAPrivateWrapper> rsapriv;
+    asio::io_context io_context;
+    tcp::socket socket = connect_to_server(io_context);
+    if (fs::exists(MY_INFO))
+    {
+        myinfo = true;
+        rsapriv = std::make_unique< RSAPrivateWrapper>(read_my_info(username, uuid));
+    }
+    else
+        rsapriv = std::make_unique <RSAPrivateWrapper>();
+
+
+    std::cout << "MessageU client at your service." << std::endl;
+    while (true)
+    {
+        std::cout << std::endl << "110) Register" << std::endl;
+        std::cout << "120) Request for clietns list" << std::endl;
+        std::cout << "130) Request for public key" << std::endl;
+        std::cout << "140) Request for waiting messages" << std::endl;
+        std::cout << "150) Send a text message  " << std::endl;
+        std::cout << "151) Send a request for symetric key  " << std::endl;
+        std::cout << "152) Send your symmetric key" << std::endl;
+        std::cout << "  0) Exit client" << std::endl<<"?";
+        int req;
+        std::cin >> req;
+        
+        switch (req)
+        {
+        case 110:
+            if (myinfo)
+            {
+                std::cout << std::endl << "Error: file my.info exists";
+                break;
+            }
+            std::cout << "\nEnter your name: ";
+            std::cin >> username;
+            Request req; 
+            req.code =  static_cast<uint16_t>(Operation::REQ_REGISTER);
+            req.version = VERSION;
+            req.user_id = UUID();
+            // Create a 255-byte vector initialized to zero.
+            std::vector<uint8_t> paddedUsername(255, 0);
+
+            // Copy the username into the paddedUsername buffer.
+            // Ensure we leave room for the null terminator.
+            size_t copyLength = std::min(username.size(), static_cast<size_t>(254));
+            std::copy(username.begin(), username.begin() + copyLength, paddedUsername.begin());
+            paddedUsername[copyLength] = '\0'; //null terminator
+           
+            std::string rsaPub = rsapriv->getPublicKey();
+            
+
+            // Create the payload: first the 255-byte padded username, then the RSA public key.
+            req.payload = paddedUsername; // copy padded username
+            req.payload.insert(req.payload.end(), rsaPub.begin(), rsaPub.end());
+
+        
+            req.size = static_cast<uint32_t>(req.payload.size());
+            
+            socket.send(construct_request(req));
+            
+            break;
+        }
+    }
+
+    socket.close();
+
 }

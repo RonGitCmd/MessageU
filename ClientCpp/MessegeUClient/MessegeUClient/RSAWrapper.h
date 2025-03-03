@@ -43,7 +43,7 @@ private:
 	CryptoPP::RSA::PrivateKey _privateKey;
 
 	RSAPrivateWrapper(const RSAPrivateWrapper& rsaprivate);
-	RSAPrivateWrapper& operator=(const RSAPrivateWrapper& rsaprivate);
+	//RSAPrivateWrapper& operator=(const RSAPrivateWrapper& rsaprivate);
 public:
 	RSAPrivateWrapper();
 	RSAPrivateWrapper(const char* key, unsigned int length);
