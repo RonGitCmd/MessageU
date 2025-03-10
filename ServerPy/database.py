@@ -36,8 +36,8 @@ class DB:
         cursor.executescript(
             "CREATE TABLE IF NOT EXISTS messages (" +
             "ID BLOB NOT NULL PRIMARY KEY," +
-            "ToClient BLOB NOT NULL PRIMARY KEY," +
-            "FromClient BLOB NOT NULL PRIMARY KEY," +
+            "ToClient BLOB NOT NULL ," +
+            "FromClient BLOB NOT NULL ," +
             "Type INTEGER NOT NULL," +
             "PublicKey BLOB NOT NULL," +
             "LastSeen TEXT)"
@@ -67,13 +67,6 @@ class DB:
         connection.close()
         self.update_time(UUID)
         return True
-        """
-        if UUID in self.clients_table:
-            return  False #client already exists
-        self.clients_table[UUID].UserName = username
-        self.clients_table[UUID].public_key = public_key
-        self.update_time(UUID)
-        """
 
     def update_time(self,UUID:bytes):
         """
@@ -138,7 +131,53 @@ class DB:
         # Commit changes and close the connection.
         conn.commit()
         conn.close()
-    def get_uuid(self):
-        pass
 
 
+    def get_client_list(self,uuid:bytes)->bytes:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Query to get all clients whose ID (a BLOB) does not match the given uuid.
+        query = "SELECT ID, UserName FROM clients WHERE ID != ?"
+        cursor.execute(query, (sqlite3.Binary(uuid),))
+
+        # Retrieve all matching rows.
+        results = cursor.fetchall()
+
+        conn.close()
+        formatted_records = []
+        for client in results:
+            client_id, username = client
+
+            #Ensure the client ID is exactly 16 bytes
+            if len(client_id) != 16:
+                raise ValueError("Client ID must be exactly 16 bytes")
+
+            # Convert username to bytes using UTF-8 encoding.
+            username_bytes = username.encode("utf-8")
+
+            #Ensure the username part is exactly 255 bytes:
+            padded_username = username_bytes.ljust(255, b'\x00')[:255]
+
+
+            record_bytes = client_id + padded_username
+            formatted_records.append(record_bytes)
+
+
+        return b"".join(formatted_records)
+
+
+    def get_client_public(self, uuid:bytes)->bytes:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Query to get all clients whose ID (a BLOB) does not match the given uuid.
+        query = "SELECT PublicKey FROM clients WHERE ID != ?"
+        cursor.execute(query, (sqlite3.Binary(uuid),))
+
+        # Retrieve all matching rows.
+        results = cursor.fetchall()
+
+        conn.close()
+
+        return results[0][0]#first record with one field

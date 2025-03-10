@@ -25,7 +25,8 @@ class Request:
     def parse_request(self, raw_bytes:bytes):
         self.UUID = raw_bytes[:16]
         self.version = raw_bytes[16]
-        self.code = CodeTypes(int.from_bytes(raw_bytes[17:19],byteorder='little'))
+        raw_code = int.from_bytes(raw_bytes[17:19],byteorder='little')
+        self.code = CodeTypes(raw_code)
         self.size =  int.from_bytes(raw_bytes[19:23], byteorder="little")
         self.payload = raw_bytes[23:]
 

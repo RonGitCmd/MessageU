@@ -1,6 +1,7 @@
 #include<vector>
 #include<string>
 #include<array>
+#include<map>
 #ifndef PROTOCOL_TOOLS_H
 #define PROTOCOL_TOOLS_H
 // Enum for Operations (Op)
@@ -19,9 +20,27 @@ enum class Operation {
 };
 
 
-// Structure to represent a UUID
-struct UUID {
+// class to represent a UUID
+class UUID {
+public:
     std::array<uint8_t, 16> id;
+    ~UUID();
+    
+
+    UUID(const UUID& other);
+    
+
+    UUID& operator=(const UUID& other);
+   
+    UUID();
+  
+    // Comparison operators (compare the contents of the 'id' array)
+    bool operator==(const UUID& other) const;
+    
+
+    bool operator!=(const UUID& other) const;
+    bool  operator <(const UUID& other) const;
+   
 };
 
 // Structure to represent a Request
@@ -43,5 +62,6 @@ struct Response {
 
 Response parse_response(const std::vector<uint8_t>& raw_data);
 std::vector<uint8_t> construct_request(const Request& req);
+std::map<std::string, UUID> extractClientMap(const std::vector<uint8_t>& data);
 
 #endif

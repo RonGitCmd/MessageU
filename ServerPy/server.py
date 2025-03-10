@@ -18,32 +18,58 @@ def gen_uuid()->bytes:
     return os.urandom(16)
 
 def handle_client(db: DB, clientSocket:socket, client_address:str):
-    while True:
-        packet = read_socket(clientSocket)#wait for client request
-        client_request = Request()
-        client_request.parse_request(packet)
-        UUID = gen_uuid()
-        match client_request.code:
-            case CodeTypes.REQ_REGISTER:
-                name,public_key = client_request.payload[:255], client_request.payload[255:]
-                username = str(name)
-                if db.register_client(UUID,username,public_key):
+    try:
+        while True:
+            packet = read_socket(clientSocket)#wait for client request
+            client_request = Request()
+            client_request.parse_request(packet)
+            UUID = client_request.UUID
+            db.update_time(UUID)
+            match client_request.code:
+                case CodeTypes.REQ_REGISTER:
+                    name,public_key = client_request.payload[:255], client_request.payload[255:]
+                    username = name.decode().rstrip()
+                    UUID = gen_uuid()
+                    if db.register_client(UUID,username,public_key):
+                        resp = Response()
+                        resp.code = CodeTypes.RESP_SUCSESS_REGISTER
+                        resp.version = VERSION
+                        resp.size = 16
+                        resp.payload = UUID
+                        clientSocket.sendall(resp.construct_response())
+                    else:
+                        resp = Response()
+                        resp.code = CodeTypes.RESP_ERROR
+                        resp.version = VERSION
+                        resp.size = 0
+                        resp.payload = bytes()
+                        clientSocket.sendall(resp.construct_response())
+                case CodeTypes.REQ_GETCLIENT_LIST:
+                    client_list = db.get_client_list(UUID)
                     resp = Response()
-                    resp.code = CodeTypes.RESP_SUCSESS_REGISTER
+                    resp.code = CodeTypes.RESP_CLIENT_LIST
                     resp.version = VERSION
-                    resp.size = 16
-                    resp.payload = UUID
+                    resp.size = len(client_list)
+                    resp.payload = client_list
                     clientSocket.sendall(resp.construct_response())
-                else:
+                case CodeTypes.REQ_GETCLIENT_PUBLIC:
+                    target_uuid = client_request.payload
+                    p_key = db.get_client_public(target_uuid)
                     resp = Response()
-                    resp.code = CodeTypes.RESP_ERROR
+                    resp.code = CodeTypes.RESP_CLIENT_PUBLIC
                     resp.version = VERSION
-                    resp.size = 0
-                    resp.payload = bytes()
+                    resp.payload = target_uuid +p_key
+                    resp.size = len(resp.payload)
                     clientSocket.sendall(resp.construct_response())
 
 
 
+
+    except ConnectionRefusedError:
+        print("Connection refused.")
+    except Exception as e:
+        print(f"Error: {e}")
+        return
 
 
 

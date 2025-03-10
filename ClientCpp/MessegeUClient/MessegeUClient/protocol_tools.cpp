@@ -9,6 +9,53 @@
 
 
 
+
+
+
+UUID::UUID(const UUID& other)
+{
+    id = other.id;
+}
+UUID::~UUID()
+{
+
+}
+
+
+UUID& UUID::operator=(const UUID& other)
+{
+    if (this != &other) {
+        id = other.id;
+    }
+    return *this;
+}
+
+UUID::UUID()
+{}
+
+// Comparison operators (compare the contents of the 'id' array)
+bool UUID::operator==(const UUID& other) const
+{
+    return id == other.id;
+    
+}
+
+bool UUID::operator!=(const UUID& other) const
+{
+    return !(*this == other);
+}
+
+
+bool  UUID::operator <(const UUID& other) const
+{
+    return id < other.id;
+    // C++20: std::array has built-in operator< for lexicographic comparison
+    // For older compilers, you could use:
+    // return std::lexicographical_compare(id.begin(), id.end(),
+    //                                     other.id.begin(), other.id.end());
+}
+
+
 // Function to parse a response from raw data
 Response parse_response(const std::vector<uint8_t>& raw_data) {
     Response res;
@@ -34,17 +81,17 @@ Response parse_response(const std::vector<uint8_t>& raw_data) {
 
 // Function to construct a request into raw data
 std::vector<uint8_t> construct_request(const Request& req) {
-    std::vector<uint8_t> raw_data;
+    std::vector<uint8_t> raw_data(0);
 
 
     raw_data.insert(raw_data.end(), req.user_id.id.begin(), req.user_id.id.end());
     raw_data.push_back(req.version);
 
-    // Add status
-    uint16_t code = req.code;
-    raw_data.insert(raw_data.end(), reinterpret_cast<uint8_t*>(req.size), reinterpret_cast<uint8_t*>(req.size) + sizeof(req.size));
+    
 
-    raw_data.insert(raw_data.end(), reinterpret_cast<uint8_t*>(&code), reinterpret_cast<uint8_t*>(&code) + sizeof(req.code));
+    raw_data.insert(raw_data.end(), reinterpret_cast<const uint8_t*>(&req.code), reinterpret_cast<const uint8_t*>(&req.code) + sizeof(req.code));
+    raw_data.insert(raw_data.end(), reinterpret_cast<const uint8_t*>(&req.size), reinterpret_cast<const uint8_t*>(&req.size) + sizeof(req.size));
+
     if (req.code == (uint16_t)Operation::REQ_GETCLIENT_LIST ||
         req.code == (uint16_t)Operation::REQ_PULLMESAGES
         )
@@ -56,6 +103,38 @@ std::vector<uint8_t> construct_request(const Request& req) {
     return raw_data;
 }
 
+
+std::map<std::string, UUID> extractClientMap(const std::vector<uint8_t>& data) {
+    constexpr size_t recordSize = 271; // 16 bytes for UUID + 255 bytes for username
+    if (data.size() % recordSize != 0) {
+        throw std::runtime_error("Invalid data size: not a multiple of 271 bytes");
+    }
+
+    std::map<std::string, UUID> clientMap;
+    size_t numRecords = data.size() / recordSize;
+
+    for (size_t i = 0; i < numRecords; ++i) {
+        const uint8_t* recordStart = data.data() + i * recordSize;
+
+        // Extract UUID: first 16 bytes.
+        UUID uuid;
+        std::copy(recordStart, recordStart + 16, uuid.id.begin());
+
+        // Extract username: next 255 bytes.
+        // We treat the username bytes as a C-string, stopping at the first null terminator.
+        const char* usernamePtr = reinterpret_cast<const char*>(recordStart + 16);
+        std::string username(usernamePtr, 255);
+        size_t pos = username.find('\0');
+        if (pos != std::string::npos) {
+            username.resize(pos);
+        }
+
+        // Insert into map (username as key, UUID as value)
+        clientMap[username] = uuid;
+    }
+
+    return clientMap;
+}
 
 
 

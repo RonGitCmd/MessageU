@@ -9,7 +9,8 @@
 #include "Base64Wrapper.h"
 #include "AESWrapper.h"
 #include "RSAWrapper.h"
-
+#include <string>
+#include <map>
 namespace fs = std::filesystem;
 namespace asio = boost::asio;
 using asio::ip::tcp;
@@ -48,7 +49,7 @@ tcp::socket connect_to_server(  asio::io_context& io_context)
     return socket; // Return the connected socket
 }
 
-
+//*/
 /// <summary>
 /// Used for parsing responses from serever
 /// Handled dynamic message size.
@@ -117,7 +118,7 @@ void store_my_info(const std::string& name, const UUID& uuid, std::string rsakey
 }
 
 
-std::string read_my_info(std::string& name, UUID& uuid) {
+const std::string read_my_info(std::string& name, UUID& uuid) {
     // Open the file for reading.
     std::ifstream ifs(MY_INFO, std::ios::in);
     if (!ifs)
@@ -146,12 +147,13 @@ std::string read_my_info(std::string& name, UUID& uuid) {
     for (size_t i = 0; i < 16; ++i)
         uuid.id[i] = static_cast<uint8_t>(decoded_uuid[i]);
 
-    // Read the third line: AES key in Base64 encoding.
+    // Read the rest: RS key in Base64 encoding.
     std::string rsakey_b64;
-    if (!std::getline(ifs, rsakey_b64))
-        throw std::runtime_error("Failed to read AES key from file");
+    std::ostringstream oss;
+    oss << ifs.rdbuf();  // reads until EOF from the current file position
+    rsakey_b64 = oss.str();
 
-    // Decode the Base64 string to obtain the raw AES key bytes.
+    // Decode the Base64 string to obtain the raw RSA key bytes.
     std::string decoded_rsa = Base64Wrapper::decode(rsakey_b64);
   
     return decoded_rsa;
@@ -160,74 +162,189 @@ std::string read_my_info(std::string& name, UUID& uuid) {
 
 int main()
 {
-    std::string username;
-    UUID uuid;
-    bool myinfo = false;
-    std::unique_ptr<RSAPrivateWrapper> rsapriv;
-    asio::io_context io_context;
-    tcp::socket socket = connect_to_server(io_context);
-    if (fs::exists(MY_INFO))
+    try
     {
-        myinfo = true;
-        rsapriv = std::make_unique< RSAPrivateWrapper>(read_my_info(username, uuid));
-    }
-    else
-        rsapriv = std::make_unique <RSAPrivateWrapper>();
-
-
-    std::cout << "MessageU client at your service." << std::endl;
-    while (true)
-    {
-        std::cout << std::endl << "110) Register" << std::endl;
-        std::cout << "120) Request for clietns list" << std::endl;
-        std::cout << "130) Request for public key" << std::endl;
-        std::cout << "140) Request for waiting messages" << std::endl;
-        std::cout << "150) Send a text message  " << std::endl;
-        std::cout << "151) Send a request for symetric key  " << std::endl;
-        std::cout << "152) Send your symmetric key" << std::endl;
-        std::cout << "  0) Exit client" << std::endl<<"?";
-        int req;
-        std::cin >> req;
-        
-        switch (req)
-        {
-        case 110:
-            if (myinfo)
-            {
-                std::cout << std::endl << "Error: file my.info exists";
-                break;
-            }
-            std::cout << "\nEnter your name: ";
-            std::cin >> username;
-            Request req; 
-            req.code =  static_cast<uint16_t>(Operation::REQ_REGISTER);
-            req.version = VERSION;
-            req.user_id = UUID();
-            // Create a 255-byte vector initialized to zero.
-            std::vector<uint8_t> paddedUsername(255, 0);
-
-            // Copy the username into the paddedUsername buffer.
-            // Ensure we leave room for the null terminator.
-            size_t copyLength = std::min(username.size(), static_cast<size_t>(254));
-            std::copy(username.begin(), username.begin() + copyLength, paddedUsername.begin());
-            paddedUsername[copyLength] = '\0'; //null terminator
-           
-            std::string rsaPub = rsapriv->getPublicKey();
-            
-
-            // Create the payload: first the 255-byte padded username, then the RSA public key.
-            req.payload = paddedUsername; // copy padded username
-            req.payload.insert(req.payload.end(), rsaPub.begin(), rsaPub.end());
-
-        
-            req.size = static_cast<uint32_t>(req.payload.size());
-            
-            socket.send(construct_request(req));
-            
-            break;
+        std::string username;
+        UUID uuid = UUID();
+        bool myinfo = false;
+        std::unique_ptr<RSAPrivateWrapper> rsapriv;
+        asio::io_context io_context;
+        tcp::socket socket = connect_to_server(io_context);
+        std::map<std::string, UUID> clientList;
+        std::map<UUID, std::unique_ptr<RSAPublicWrapper>> publickeyList;
+        // Check if my.info exists
+        if (fs::exists(MY_INFO)) {
+            myinfo = true;
+            // read_my_info returns a std::string for the private key
+            std::string privateKey = read_my_info(username, uuid);
+            // Construct the RSAPrivateWrapper from that private key
+            rsapriv = std::make_unique<RSAPrivateWrapper>(privateKey);
         }
+        else {
+            // If file doesn't exist, use the default constructor
+            rsapriv = std::make_unique<RSAPrivateWrapper>();
+        }
+
+        std::cout << "MessageU client at your service." << std::endl;
+        while (true)
+        {
+            std::cout << std::endl << "110) Register" << std::endl;
+            std::cout << "120) Request for clietns list" << std::endl;
+            std::cout << "130) Request for public key" << std::endl;
+            std::cout << "140) Request for waiting messages" << std::endl;
+            std::cout << "150) Send a text message  " << std::endl;
+            std::cout << "151) Send a request for symetric key  " << std::endl;
+            std::cout << "152) Send your symmetric key" << std::endl;
+            std::cout << "  0) Exit client" << std::endl << "?";
+            int userinput;
+            std::cin >> userinput;
+
+            switch (userinput)
+            {
+                case 0:
+                {
+                    std::cout << "Exiting client." << std::endl;
+                    socket.close();
+                    return 0;
+                }
+                case 110:
+                {
+                    if (myinfo)
+                    {
+                        std::cout << std::endl << "Error: file my.info exists";
+                        break;
+                    }
+                    std::cout << "\nEnter your name: ";
+                    std::cin.clear();
+                    std::cin.get(); // this will consume the newline
+                    std::getline(std::cin, username);
+                    Request req;
+                    req.code = static_cast<uint16_t>(Operation::REQ_REGISTER);
+                    req.version = VERSION;
+                    req.user_id = UUID();
+                    // Create a 255-byte vector initialized to zero.
+                    std::vector<uint8_t> paddedUsername(255, 0);
+
+                    // Copy the username into the paddedUsername buffer.
+                    // Ensure we leave room for the null terminator.
+                    size_t copyLength = std::min(username.size(), static_cast<size_t>(254));
+                    std::copy(username.begin(), username.begin() + copyLength, paddedUsername.begin());
+                    paddedUsername[copyLength] = '\0'; //null terminator
+
+                    std::string rsaPub = rsapriv->getPublicKey();
+
+
+                    // Create the payload: first the 255-byte padded username, then the RSA public key.
+                    req.payload = paddedUsername; // copy padded username
+                    req.payload.insert(req.payload.end(), rsaPub.begin(), rsaPub.end());
+
+
+                    req.size = static_cast<uint32_t>(req.payload.size());
+
+                    socket.send(boost::asio::buffer(construct_request(req)));
+
+                    Response resp = parse_response(read_socket(socket));
+
+                    if (resp.code == static_cast<uint16_t> (Operation::RESP_SUCSESS_REGISTER))
+                    {
+                        std::memcpy(uuid.id.data(), resp.payload.data(), 16);
+                        store_my_info(username, uuid, rsapriv->getPrivateKey());
+                        std::cout << "Successfully registered with server." << std::endl;
+                    }
+                    else
+                    {
+                        std::cout << "Error registering with server." << std::endl;
+                    }
+
+                    break;
+
+                }
+                case 120:
+                {
+                    Request req;
+                    req.code = static_cast<uint16_t>(Operation::REQ_GETCLIENT_LIST);
+                    req.version = VERSION;
+                    req.user_id = uuid;
+                    req.size = 0;
+                    req.payload = std::vector<uint8_t>(0);
+                    socket.send(boost::asio::buffer(construct_request(req)));
+                    Response resp = parse_response(read_socket(socket));
+                    if (resp.code == static_cast<uint16_t> (Operation::RESP_CLIENT_LIST))
+                    {
+                        clientList = extractClientMap(resp.payload);
+                        std::cout << "Clients registered with the server:" << std::endl;
+                        for (const auto& [uname, UUID] : clientList)
+                        {
+                            std::cout << uname << std::endl;
+                        }
+                    }
+                    else
+                    {
+                        std::cout << "Error Response from server." << std::endl;
+                    }
+                    break;
+                }
+                case 130:
+                {
+                    std::cout << "Enter Requested client username: ";
+                    std::string target_name;
+                    std::cin.clear();
+                    std::cin.get(); // this will consume the newline
+                    std::getline(std::cin, target_name);
+                    UUID target_uuid;
+                    if (clientList.find(target_name) != clientList.end())//Target name is found in the client lis
+                        target_uuid = clientList[target_name];
+                    else
+                    {
+                        std::cout << "ERROR: Client name entered is not found.";
+                        break;// if name is not found exit the case
+                    }
+
+                    Request req;
+                    req.code = static_cast<uint16_t>(Operation::REQ_GETCLIENT_PUBLIC);
+                    req.version = VERSION;
+                    req.user_id = uuid;
+                    req.payload.insert(req.payload.begin(), target_uuid.id.begin(), target_uuid.id.end());
+                    req.size = req.payload.size();
+                    socket.send(boost::asio::buffer(construct_request(req)));
+                    Response resp = parse_response(read_socket(socket));
+                    if (resp.code == static_cast<uint16_t> (Operation::RESP_CLIENT_PUBLIC))
+                    {
+                        std::array<std::uint8_t, 16> p_uuid;
+                        std::copy(resp.payload.begin(), resp.payload.begin() + 16, p_uuid.begin());
+
+                        std::array<std::uint8_t, 160> p_key;
+                        std::copy(resp.payload.begin() + 16, resp.payload.begin() + 176, p_key.begin());
+
+                        UUID n_uuid;
+                        std::copy(p_uuid.begin(), p_uuid.end(), n_uuid.id.begin());
+                        
+
+                        std::string key_str(p_key.begin(), p_key.end());
+                        publickeyList[n_uuid] = std::make_unique<RSAPublicWrapper>(key_str);//add entry to public key list
+                        std::cout << "Client " << target_name << " Public key received server." << std::endl;
+                    }
+                    else
+                    {
+                        std::cout << "Error Response from server." << std::endl;
+                    }
+                    break;
+                    
+                }
+                default:
+                {
+                    break;
+                }
+            }
+
+        }
+
+        socket.close();
     }
-
-    socket.close();
-
+    catch (std::exception ex)
+    {
+        std::cout << "ERROR: " << ex.what() << std::endl;
+        return -1;
+    }
+    return 0;
 }
