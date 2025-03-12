@@ -35,12 +35,11 @@ class DB:
         )
         cursor.executescript(
             "CREATE TABLE IF NOT EXISTS messages (" +
-            "ID BLOB NOT NULL PRIMARY KEY," +
+            "ID INTEGER PRIMARY KEY AUTOINCREMENT," +
             "ToClient BLOB NOT NULL ," +
             "FromClient BLOB NOT NULL ," +
             "Type INTEGER NOT NULL," +
-            "PublicKey BLOB NOT NULL," +
-            "LastSeen TEXT)"
+            "Content BLOB NOT NULL)"
         )
         conn.commit()
         conn.close()
@@ -87,14 +86,12 @@ class DB:
         connection.commit()
         connection.close()
 
-    def add_message(self,message_id: bytes, to_client: bytes,from_client: bytes,
-                message_type: bytes, content: bytes):
+    def add_message(self, to_client: bytes,from_client: bytes,
+                message_type: bytes, content: bytes)->int:
         """
         Adds a message to the 'messages' table in the SQLite database.
 
         Parameters:
-            db_path (str): Path to the SQLite database file.
-            message_id (bytes): 4-byte message identifier.
             to_client (bytes): 16-byte recipient client ID.
             from_client (bytes): 16-byte sender client ID.
             message_type (bytes): 1-byte message type.
@@ -103,9 +100,7 @@ class DB:
         Raises:
             ValueError: If any of the provided bytes do not match the expected length.
         """
-        # Validate byte lengths.
-        if len(message_id) != 4:
-            raise ValueError("message_id must be exactly 4 bytes")
+
         if len(to_client) != 16:
             raise ValueError("to_client must be exactly 16 bytes")
         if len(from_client) != 16:
@@ -119,19 +114,19 @@ class DB:
 
         # Insert the message into the messages table.
         cursor.execute(
-            "INSERT INTO messages (ID, ToClient, FromClient, Type, Content) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO messages (ToClient, FromClient, Type, Content) VALUES (?, ?, ?, ?)"
         , (
-            sqlite3.Binary(message_id),
             sqlite3.Binary(to_client),
             sqlite3.Binary(from_client),
             sqlite3.Binary(message_type),
             sqlite3.Binary(content)
         ))
+        inserted_id = cursor.lastrowid
 
         # Commit changes and close the connection.
         conn.commit()
         conn.close()
-
+        return inserted_id
 
     def get_client_list(self,uuid:bytes)->bytes:
         conn = sqlite3.connect(DB_PATH)
@@ -181,3 +176,59 @@ class DB:
         conn.close()
 
         return results[0][0]#first record with one field
+
+    def pull_messages(self, uuid: bytes) -> bytes:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Query the messages table for rows where ToClient matches the given uuid
+        cursor.execute("""
+            SELECT ID, ToClient, FromClient, Type, Content
+            FROM messages
+            WHERE ToClient = ?
+        """, (sqlite3.Binary(uuid),))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Each row: (ID, ToClient, FromClient, Type, Content)
+        # We need a bytes object with:
+        #  16 bytes: FromClient
+        #   4 bytes: message_id
+        #   1 byte : message_type
+        #   4 bytes: content_size
+        #   content_size bytes: content
+        result_chunks = []
+
+        for row in rows:
+            message_id = row[0]  # int
+            to_client = row[1]  # 16-byte BLOB
+            from_client = row[2]  # 16-byte BLOB
+            message_type = row[3]
+            content = row[4]  # BLOB
+
+            # Verify from_client is 16 bytes
+            if len(from_client) != 16:
+                raise ValueError(f"FromClient must be 16 bytes (got {len(from_client)})")
+
+            # Convert message_id (int) to 4 bytes, little-endian
+            message_id_bytes = message_id.to_bytes(4, byteorder="little", signed=False)
+
+            # content_size is the length of content; convert to 4 bytes
+            content_size = len(content)
+            content_size_bytes = content_size.to_bytes(4, byteorder="little", signed=False)
+
+            # Build one record for this message
+            record_bytes = (
+                    from_client +  # 16 bytes
+                    message_id_bytes +  # 4 bytes
+                    message_type +  # 1 byte
+                    content_size_bytes +  # 4 bytes
+                    content  # content_size bytes
+            )
+
+            result_chunks.append(record_bytes)
+
+        # Join all record bytes into a single bytes object
+        all_messages = b"".join(result_chunks)
+        return all_messages

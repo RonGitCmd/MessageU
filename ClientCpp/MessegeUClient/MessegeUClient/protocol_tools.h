@@ -20,6 +20,13 @@ enum class Operation {
 };
 
 
+enum class MessageTypes {
+    REQ_SYM = 1,
+    SEND_SYM = 2,
+    SEND_TEXT_MESSAGE = 3,
+    SEND_FILE = 4
+};
+
 // class to represent a UUID
 class UUID {
 public:
@@ -60,8 +67,18 @@ struct Response {
     std::vector<uint8_t> payload;
 };
 
+struct ClientMessage {
+    UUID source_uuid;
+    uint32_t message_id;
+    MessageTypes message_type;
+    uint32_t message_size;
+    std::string content;
+};
+
 Response parse_response(const std::vector<uint8_t>& raw_data);
 std::vector<uint8_t> construct_request(const Request& req);
 std::map<std::string, UUID> extractClientMap(const std::vector<uint8_t>& data);
+std::vector<ClientMessage> parseMessages(const std::vector<uint8_t>& payload);
+
 
 #endif

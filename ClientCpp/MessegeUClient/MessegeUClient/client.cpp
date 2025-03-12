@@ -170,8 +170,10 @@ int main()
         std::unique_ptr<RSAPrivateWrapper> rsapriv;
         asio::io_context io_context;
         tcp::socket socket = connect_to_server(io_context);
-        std::map<std::string, UUID> clientList;
+        std::map<std::string, UUID> nameToUUID;
+        std::map<UUID, std::string> UUIDToName;
         std::map<UUID, std::unique_ptr<RSAPublicWrapper>> publickeyList;
+        std::map<UUID, std::unique_ptr<AESWrapper>> AesList;
         // Check if my.info exists
         if (fs::exists(MY_INFO)) {
             myinfo = true;
@@ -184,7 +186,7 @@ int main()
             // If file doesn't exist, use the default constructor
             rsapriv = std::make_unique<RSAPrivateWrapper>();
         }
-
+        
         std::cout << "MessageU client at your service." << std::endl;
         while (true)
         {
@@ -201,13 +203,13 @@ int main()
 
             switch (userinput)
             {
-                case 0:
+                case 0://exit
                 {
                     std::cout << "Exiting client." << std::endl;
                     socket.close();
                     return 0;
                 }
-                case 110:
+                case 110://register
                 {
                     if (myinfo)
                     {
@@ -259,7 +261,7 @@ int main()
                     break;
 
                 }
-                case 120:
+                case 120://client list
                 {
                     Request req;
                     req.code = static_cast<uint16_t>(Operation::REQ_GETCLIENT_LIST);
@@ -271,10 +273,11 @@ int main()
                     Response resp = parse_response(read_socket(socket));
                     if (resp.code == static_cast<uint16_t> (Operation::RESP_CLIENT_LIST))
                     {
-                        clientList = extractClientMap(resp.payload);
+                        nameToUUID = extractClientMap(resp.payload);
                         std::cout << "Clients registered with the server:" << std::endl;
-                        for (const auto& [uname, UUID] : clientList)
+                        for (const auto& [uname, UUID] : nameToUUID)
                         {
+                            UUIDToName[UUID] = uname;//add clients to the uuid to name map
                             std::cout << uname << std::endl;
                         }
                     }
@@ -284,7 +287,7 @@ int main()
                     }
                     break;
                 }
-                case 130:
+                case 130://client key
                 {
                     std::cout << "Enter Requested client username: ";
                     std::string target_name;
@@ -292,11 +295,11 @@ int main()
                     std::cin.get(); // this will consume the newline
                     std::getline(std::cin, target_name);
                     UUID target_uuid;
-                    if (clientList.find(target_name) != clientList.end())//Target name is found in the client lis
-                        target_uuid = clientList[target_name];
+                    if (nameToUUID.find(target_name) != nameToUUID.end())//Target name is found in the client lis
+                        target_uuid = nameToUUID[target_name];
                     else
                     {
-                        std::cout << "ERROR: Client name entered is not found.";
+                        std::cout << "ERROR: Client name entered is not found." << std::endl;
                         break;// if name is not found exit the case
                     }
 
@@ -322,7 +325,7 @@ int main()
 
                         std::string key_str(p_key.begin(), p_key.end());
                         publickeyList[n_uuid] = std::make_unique<RSAPublicWrapper>(key_str);//add entry to public key list
-                        std::cout << "Client " << target_name << " Public key received server." << std::endl;
+                        std::cout << "Client " << target_name << " Public key retrieved server." << std::endl;
                     }
                     else
                     {
@@ -331,6 +334,139 @@ int main()
                     break;
                     
                 }
+
+                case 140: //Pull messages
+                {
+                    Request req;
+                    req.code = static_cast<uint16_t>(Operation::REQ_PULLMESAGES);
+                    req.version = VERSION;
+                    req.user_id = uuid;
+                    req.size = 0;
+                    req.payload = std::vector<uint8_t>(0);
+                    socket.send(boost::asio::buffer(construct_request(req)));
+                    Response resp = parse_response(read_socket(socket));
+                    std::vector<ClientMessage> pulled_messages = parseMessages(resp.payload);
+                    
+                    if (resp.code == static_cast<uint16_t> (Operation::RESP_PENDINGMESSAGE))
+                    {
+                        for (int i = 0; i < pulled_messages.size(); i++)
+                        {
+                            std::string clientName;
+                            if (UUIDToName.find(pulled_messages[i].source_uuid) != UUIDToName.end())//Target name is found in the client lis
+                                clientName = UUIDToName[pulled_messages[i].source_uuid];
+                            else
+                            {
+                                std::string uuid_hex;
+                                CryptoPP::StringSource ss_uuid(
+                                    reinterpret_cast<const uint8_t*>(pulled_messages[i].source_uuid.id.data()), pulled_messages[i].source_uuid.id.size(), true,
+                                    new CryptoPP::HexEncoder(new CryptoPP::StringSink(uuid_hex), false)  // 'false' disables line breaks
+                                );
+                                std::cout << "ERROR: No client name is associated with the UU   ID: " << uuid_hex << std::endl;
+                                break;// if name is not found exit the case
+                            }
+
+                            std::cout << "From: " << clientName << std::endl << "Content:" << std::endl;
+
+
+                            switch (pulled_messages[i].message_type)
+                            {
+                                case MessageTypes::REQ_SYM://received a request for a symetric key
+                                    break;
+                                case MessageTypes::SEND_SYM://received a symetric key
+                                    break;
+
+                                case MessageTypes::SEND_TEXT_MESSAGE://received a text msg
+                                    std::cout << pulled_messages[i].content<<std::endl;
+
+                                    break;
+
+                                case MessageTypes::SEND_FILE: //received a file
+                                    break;
+                            }
+
+                            std::cout << "." << std::endl << "." << std::endl << "-----<EOM>-----" << std::endl << "\\n" << std::endl;
+
+                        }
+                    }
+                    else
+                    {
+                        std::cout << "Error Response from server." << std::endl;
+                    }
+
+
+
+                    break;
+                }
+
+                case 150://send a text message
+                {
+                    std::cout << "Enter recipient name: ";
+                    std::string target_name;
+                    std::cin.clear();
+                    std::cin.get(); // this will consume the newline
+                    std::getline(std::cin, target_name);
+                    UUID target_uuid;
+                    if (nameToUUID.find(target_name) != nameToUUID.end())//Target name is found in the client lis
+                        target_uuid = nameToUUID[target_name];
+                    else
+                    {
+                        std::cout << "ERROR: Client name entered is not found."<<std::endl;
+                        break;// if name is not found exit the case
+                    }
+
+                    std::cout << "Enter Text message: ";
+                    std::string text_message;
+                    std::cin.clear();
+
+                    std::getline(std::cin, text_message);
+
+                    Request req;
+                    req.code = static_cast<uint16_t>(Operation::REQ_SENDCLIENT_MESSAGE);
+                    req.version = VERSION;
+                    req.user_id = uuid;
+                    req.payload.insert(req.payload.begin(), target_uuid.id.begin(), target_uuid.id.end());
+                    req.payload.push_back(static_cast<uint8_t> (MessageTypes::SEND_TEXT_MESSAGE));
+                    uint32_t text_len = static_cast<uint32_t>(text_message.size());
+                    const uint8_t* length_ptr = reinterpret_cast<const uint8_t*>(&text_len);
+                    req.payload.insert(req.payload.end(), length_ptr, length_ptr + sizeof(text_len));
+
+                    // Finally, append the actual message bytes.
+                    req.payload.insert(req.payload.end(), text_message.begin(), text_message.end());
+
+                    req.size = req.payload.size();
+                    socket.send(boost::asio::buffer(construct_request(req)));
+                    Response resp = parse_response(read_socket(socket));
+
+                    if (resp.code == static_cast<uint16_t> (Operation::RESP_MESSAGE_PROCCESED))
+                    {
+                        std::array<std::uint8_t, 16> t_uuid;
+                        std::copy(
+                            resp.payload.begin(),
+                            resp.payload.begin() + 16,
+                            t_uuid.begin()
+                        );
+                                                
+                        uint32_t m_id = 0;
+                        std::memcpy(&m_id, resp.payload.data() + 16, sizeof(m_id));
+
+
+                        UUID n_uuid;
+                        std::copy(t_uuid.begin(), t_uuid.end(), n_uuid.id.begin());
+                        if (n_uuid != target_uuid)
+                        {
+                            std::cout << "ERROR: uuid received via reply from server doesn't match.";
+                            break;
+                        }
+                        std::cout << "Message with id " << m_id << " successfully received by server";
+                        }
+                    else
+                    {
+                        std::cout << "Error Response from server." << std::endl;
+                    }
+                    break;
+
+                }
+
                 default:
                 {
                     break;

@@ -45,7 +45,17 @@ def handle_client(db: DB, clientSocket:socket, client_address:str):
                         resp.payload = bytes()
                         clientSocket.sendall(resp.construct_response())
                 case CodeTypes.REQ_GETCLIENT_LIST:
-                    client_list = db.get_client_list(UUID)
+                    client_list = bytes()
+                    try:
+                        client_list = db.get_client_list(UUID)
+                    except:
+                        resp = Response()
+                        resp.code = CodeTypes.RESP_ERROR
+                        resp.version = VERSION
+                        resp.size = 0
+                        resp.payload = bytes()
+                        clientSocket.sendall(resp.construct_response())
+                        continue
                     resp = Response()
                     resp.code = CodeTypes.RESP_CLIENT_LIST
                     resp.version = VERSION
@@ -54,13 +64,68 @@ def handle_client(db: DB, clientSocket:socket, client_address:str):
                     clientSocket.sendall(resp.construct_response())
                 case CodeTypes.REQ_GETCLIENT_PUBLIC:
                     target_uuid = client_request.payload
-                    p_key = db.get_client_public(target_uuid)
+                    p_key = bytes()
+                    try:
+                        p_key = db.get_client_public(target_uuid)
+                    except:
+                        resp = Response()
+                        resp.code = CodeTypes.RESP_ERROR
+                        resp.version = VERSION
+                        resp.size = 0
+                        resp.payload = bytes()
+                        clientSocket.sendall(resp.construct_response())
+                        continue
                     resp = Response()
                     resp.code = CodeTypes.RESP_CLIENT_PUBLIC
                     resp.version = VERSION
                     resp.payload = target_uuid +p_key
                     resp.size = len(resp.payload)
                     clientSocket.sendall(resp.construct_response())
+                case CodeTypes.REQ_PULL_MESAGES:
+                    request_uuid =  client_request.UUID
+                    try:
+                        messages = db.pull_messages(request_uuid)
+                    except Exception as e:
+                        resp = Response()
+                        resp.code = CodeTypes.RESP_ERROR
+                        resp.version = VERSION
+                        resp.size = 0
+                        resp.payload = bytes()
+                        clientSocket.sendall(resp.construct_response())
+                        continue
+                    resp = Response()
+                    resp.code = CodeTypes.RESP_PENDING_MESSAGE
+                    resp.version = VERSION
+                    resp.payload = messages
+                    resp.size = len(messages)
+                    clientSocket.sendall(resp.construct_response())
+                    pass
+
+                case CodeTypes.REQ_SENDCLIENT_MESSAGE:
+                    source_id = client_request.UUID
+                    target_id = client_request.payload[:16]
+                    message_type =  client_request.payload[16].to_bytes(byteorder= 'little',length=1)
+                    message_size = int.from_bytes(client_request.payload[17:21], byteorder='little')
+                    message_contents = client_request.payload[21:21+message_size]
+                    try:
+                        m_id = int.to_bytes(db.add_message(target_id,source_id,message_type,message_contents),length=4,byteorder='little')
+                    except Exception as e:
+                        resp = Response()
+                        resp.code = CodeTypes.RESP_ERROR
+                        resp.version = VERSION
+                        resp.size = 0
+                        resp.payload = bytes()
+                        clientSocket.sendall(resp.construct_response())
+                        continue
+                    resp = Response()
+                    resp.code = CodeTypes.RESP_MESSAGE_PROCCESED
+                    resp.version = VERSION
+                    resp.payload = target_id+m_id
+                    resp.size = 20
+                    clientSocket.sendall(resp.construct_response())
+
+
+
 
 
 

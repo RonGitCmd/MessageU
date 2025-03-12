@@ -136,5 +136,63 @@ std::map<std::string, UUID> extractClientMap(const std::vector<uint8_t>& data) {
     return clientMap;
 }
 
+/// <summary>
+/// parsses all messages in a payload of pull message reply
+/// </summary>
+/// <param name="payload"></param>
+/// <returns></returns>
+std::vector<ClientMessage> parseMessages(const std::vector<uint8_t>& payload)
+{
+    std::vector<ClientMessage> messages;
+    size_t index = 0;//cur ind
+    const size_t total_size = payload.size();
 
+    while (index < total_size)
+    {
+        //check if 25 first bytes (uuid m_id m_type m_size)
+        if (total_size - index < 25) {
+            throw std::runtime_error("insufficient bytes for next message header");
+        }
 
+        UUID src_uuid;
+        std::memcpy(src_uuid.id.data(), &payload[index], 16);
+        index += 16;
+
+     
+        uint32_t message_id = 0;
+        std::memcpy(&message_id, &payload[index], 4);
+        index += 4;
+
+        if (index >= total_size) {
+            throw std::runtime_error("insufficient bytes for message type");
+        }
+        uint8_t msg_type_byte = payload[index++];
+        MessageTypes message_type = static_cast<MessageTypes>(msg_type_byte);
+
+        if (index + 4 > total_size) {
+            throw std::runtime_error("insufficient bytes for message size");
+        }
+        uint32_t msg_size = 0;
+        std::memcpy(&msg_size, &payload[index], 4);
+        index += 4;
+
+        if (index + msg_size > total_size) {
+            throw std::runtime_error("insufficient bytes for message content");
+        }
+        // Extract the content as a string
+        std::string content(reinterpret_cast<const char*>(&payload[index]), msg_size);
+        index += msg_size;
+
+        // Construct the message and push to vector
+        ClientMessage msg;
+        msg.source_uuid = src_uuid;
+        msg.message_id = message_id;
+        msg.message_type = message_type;
+        msg.message_size = msg_size;
+        msg.content = std::move(content);
+
+        messages.push_back(std::move(msg));
+    }
+
+    return messages;
+}
