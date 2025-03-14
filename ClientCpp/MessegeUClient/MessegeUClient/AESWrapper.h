@@ -15,6 +15,7 @@ public:
 
 	AESWrapper();
 	AESWrapper(const unsigned char* key, unsigned int size);
+	AESWrapper(const std::string& keyStr);
 	~AESWrapper();
 
 	const unsigned char* getKey() const;

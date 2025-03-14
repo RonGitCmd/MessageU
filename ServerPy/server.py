@@ -9,9 +9,32 @@ from database import DB
 
 
 
+DEFAULT_PORT = 1357
+PORT_FILE = "myport.info"
 
-HOST = 'localhost'
-PORT = 40607
+def get_port():
+    """
+    Reads a port number from myport.info if present.
+    If the file doesn't exist or has invalid content, use DEFAULT_PORT.
+    """
+    if not os.path.exists(PORT_FILE):
+        print(f"File '{PORT_FILE}' not found. Using default port {DEFAULT_PORT}.")
+        return DEFAULT_PORT
+
+    try:
+        with open(PORT_FILE, "r", encoding="utf-8") as f:
+            port_str = f.read().strip()  # read entire file, strip whitespace
+        if not port_str:
+            print(f"'{PORT_FILE}' is empty. Using default port {DEFAULT_PORT}.")
+            return DEFAULT_PORT
+
+        port = int(port_str)
+        print(f"Using port from '{PORT_FILE}': {port}")
+        return port
+    except (ValueError, OSError):
+        # ValueError means invalid integer; OSError means file read error
+        print(f"Invalid or unreadable content in '{PORT_FILE}'. Using default port {DEFAULT_PORT}.")
+        return DEFAULT_PORT
 VERSION = 2
 
 def gen_uuid()->bytes:
@@ -140,9 +163,10 @@ def handle_client(db: DB, clientSocket:socket, client_address:str):
 
 
 def start_server():
-    print(f"[INFO] Starting server on {HOST}:{PORT}")
+    port = get_port()
+    print(f"[INFO] Starting server on 0.0.0.0:{port}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-        server_socket.bind((HOST, PORT))
+        server_socket.bind(('0.0.0.0', port))
         server_socket.listen(5)
         print("[INFO] Server is listening for connections...")
         db = DB()

@@ -179,9 +179,7 @@ std::vector<ClientMessage> parseMessages(const std::vector<uint8_t>& payload)
         if (index + msg_size > total_size) {
             throw std::runtime_error("insufficient bytes for message content");
         }
-        // Extract the content as a string
-        std::string content(reinterpret_cast<const char*>(&payload[index]), msg_size);
-        index += msg_size;
+        
 
         // Construct the message and push to vector
         ClientMessage msg;
@@ -189,10 +187,11 @@ std::vector<ClientMessage> parseMessages(const std::vector<uint8_t>& payload)
         msg.message_id = message_id;
         msg.message_type = message_type;
         msg.message_size = msg_size;
-        msg.content = std::move(content);
+        msg.content = std::vector<uint8_t>(payload.begin() + index, payload.begin() + index + msg_size);
+        index += msg_size;
 
         messages.push_back(std::move(msg));
-    }
+    } 
 
     return messages;
 }

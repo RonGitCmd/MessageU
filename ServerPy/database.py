@@ -166,11 +166,10 @@ class DB:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        # Query to get all clients whose ID (a BLOB) does not match the given uuid.
-        query = "SELECT PublicKey FROM clients WHERE ID != ?"
+
+        query = "SELECT PublicKey FROM clients WHERE ID = ?"
         cursor.execute(query, (sqlite3.Binary(uuid),))
 
-        # Retrieve all matching rows.
         results = cursor.fetchall()
 
         conn.close()

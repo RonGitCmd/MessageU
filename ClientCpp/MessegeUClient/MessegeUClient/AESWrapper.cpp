@@ -26,7 +26,13 @@ AESWrapper::AESWrapper(const unsigned char* key, unsigned int length)
 		throw std::length_error("key length must be 16 bytes");
 	memcpy_s(_key, DEFAULT_KEYLENGTH, key, length);
 }
+AESWrapper::AESWrapper(const std::string& keyStr)
+{
+	if (keyStr.size() != DEFAULT_KEYLENGTH)
+		throw std::length_error("key length must be 16 bytes");
 
+	memcpy_s(_key, DEFAULT_KEYLENGTH, keyStr.data(), keyStr.size());
+}
 AESWrapper::~AESWrapper()
 {
 }

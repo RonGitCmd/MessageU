@@ -19,6 +19,12 @@ const std::string MY_INFO = (fs::current_path().u8string() + "\\my.info");
 const std::string SERVER_INFO = (fs::current_path().u8string() + "\\server.info");
 
 
+std::string vecuint8ToString(const std::vector<uint8_t>& vec)
+{
+    return std::string(reinterpret_cast<const char*>(vec.data()), vec.size());
+}
+
+
 tcp::socket connect_to_server(  asio::io_context& io_context)
 {
     std::ifstream ifs(SERVER_INFO);
@@ -172,8 +178,9 @@ int main()
         tcp::socket socket = connect_to_server(io_context);
         std::map<std::string, UUID> nameToUUID;
         std::map<UUID, std::string> UUIDToName;
-        std::map<UUID, std::unique_ptr<RSAPublicWrapper>> publickeyList;
+        std::map<UUID, std::unique_ptr<RSAPublicWrapper>> UUIDPublicKey;
         std::map<UUID, std::unique_ptr<AESWrapper>> AesList;
+       
         // Check if my.info exists
         if (fs::exists(MY_INFO)) {
             myinfo = true;
@@ -187,6 +194,11 @@ int main()
             rsapriv = std::make_unique<RSAPrivateWrapper>();
         }
         
+        std::string tmp_pub = rsapriv->getPublicKey();
+        RSAPublicWrapper rsa_pub_key = RSAPublicWrapper(tmp_pub);
+        std::cout << rsapriv->decrypt(rsa_pub_key.encrypt("Testing keys")) << std::endl;
+        
+
         std::cout << "MessageU client at your service." << std::endl;
         while (true)
         {
@@ -252,6 +264,7 @@ int main()
                         std::memcpy(uuid.id.data(), resp.payload.data(), 16);
                         store_my_info(username, uuid, rsapriv->getPrivateKey());
                         std::cout << "Successfully registered with server." << std::endl;
+
                     }
                     else
                     {
@@ -287,7 +300,7 @@ int main()
                     }
                     break;
                 }
-                case 130://client key
+                case 130://request client key
                 {
                     std::cout << "Enter Requested client username: ";
                     std::string target_name;
@@ -324,7 +337,9 @@ int main()
                         
 
                         std::string key_str(p_key.begin(), p_key.end());
-                        publickeyList[n_uuid] = std::make_unique<RSAPublicWrapper>(key_str);//add entry to public key list
+
+
+                        UUIDPublicKey[n_uuid] = std::make_unique<RSAPublicWrapper>(key_str);//add entry to public key list
                         std::cout << "Client " << target_name << " Public key retrieved server." << std::endl;
                     }
                     else
@@ -345,8 +360,7 @@ int main()
                     req.payload = std::vector<uint8_t>(0);
                     socket.send(boost::asio::buffer(construct_request(req)));
                     Response resp = parse_response(read_socket(socket));
-                    std::vector<ClientMessage> pulled_messages = parseMessages(resp.payload);
-                    
+                    std::vector<ClientMessage> pulled_messages = parseMessages(resp.payload);                    
                     if (resp.code == static_cast<uint16_t> (Operation::RESP_PENDINGMESSAGE))
                     {
                         for (int i = 0; i < pulled_messages.size(); i++)
@@ -361,7 +375,7 @@ int main()
                                     reinterpret_cast<const uint8_t*>(pulled_messages[i].source_uuid.id.data()), pulled_messages[i].source_uuid.id.size(), true,
                                     new CryptoPP::HexEncoder(new CryptoPP::StringSink(uuid_hex), false)  // 'false' disables line breaks
                                 );
-                                std::cout << "ERROR: No client name is associated with the UU   ID: " << uuid_hex << std::endl;
+                                std::cout << "ERROR: No client name is associated with the UUID: " << uuid_hex << std::endl;
                                 break;// if name is not found exit the case
                             }
 
@@ -373,10 +387,24 @@ int main()
                                 case MessageTypes::REQ_SYM://received a request for a symetric key
                                     break;
                                 case MessageTypes::SEND_SYM://received a symetric key
+                                    
+                                    try {
+
+                                        std::string decrypted_key = rsapriv->decrypt(vecuint8ToString(pulled_messages[i].content));
+                                        AesList[pulled_messages[i].source_uuid] = std::make_unique<AESWrapper>(decrypted_key);
+                                        std::cout << "symmetric key received."<<std::endl;
+                                    }
+                                    catch (std::exception e)
+                                    {
+                                        std::cout << (e.what()) << std::endl;
+                                    }
+                                    
                                     break;
 
                                 case MessageTypes::SEND_TEXT_MESSAGE://received a text msg
-                                    std::cout << pulled_messages[i].content<<std::endl;
+
+                                    //add decryption using a sym key
+                                    std::cout << vecuint8ToString (pulled_messages[i].content)<<std::endl;
 
                                     break;
 
@@ -467,6 +495,87 @@ int main()
 
                 }
 
+                case 151:
+                {
+                    break;
+                }
+
+                case 152:// send aes key
+                {
+                    std::cout << "Enter Symmetric key recipient name: ";
+                    std::string target_name;
+                    std::cin.clear();
+                    std::cin.get(); // this will consume the newline
+                    std::getline(std::cin, target_name);
+                    UUID target_uuid;
+                    if (nameToUUID.find(target_name) != nameToUUID.end())//Target name is found in the client lis
+                        target_uuid = nameToUUID[target_name];
+                    else
+                    {
+                        std::cout << "ERROR: Client name entered is not found." << std::endl;
+                        break;// if name is not found exit the case
+                    }
+
+                    if (UUIDPublicKey.find(target_uuid) == UUIDPublicKey.end())//target public key is not saved.
+                    {
+                        std::cout << "ERROR: client " << target_name << " public key was not found. Please request it." << std::endl;
+                        break;
+                    }
+
+                    AesList[target_uuid] = std::make_unique<AESWrapper>();//create random key
+
+                    Request req;
+                    req.code = static_cast<uint16_t>(Operation::REQ_SENDCLIENT_MESSAGE);
+                    req.version = VERSION;
+                    req.user_id = uuid;
+                    std::string pkey = UUIDPublicKey[target_uuid]->getPublicKey();
+                    std::string aeskey(reinterpret_cast<const char*>(AesList[target_uuid]->getKey()),AESWrapper::DEFAULT_KEYLENGTH);
+                    std::string encryptedAesKey = (UUIDPublicKey[target_uuid]->encrypt(aeskey));
+                    std::cout << target_name << "was sent aes key: " << encryptedAesKey << std::endl;
+                    req.payload.insert(req.payload.begin(), target_uuid.id.begin(), target_uuid.id.end());//add UUID
+                    req.payload.push_back(static_cast<uint8_t> (MessageTypes::SEND_SYM));//Add messagetype
+                    uint32_t aes_len = static_cast<uint32_t>(encryptedAesKey.size());
+                    const uint8_t* length_ptr = reinterpret_cast<const uint8_t*>(&aes_len);
+                    req.payload.insert(req.payload.end(), length_ptr,length_ptr + sizeof(aes_len));//add key size( size)
+                    req.payload.insert(req.payload.end(), encryptedAesKey.begin(), encryptedAesKey.end());//add key (content)
+                    req.size = req.payload.size();
+                    socket.send(boost::asio::buffer(construct_request(req)));
+                    Response resp = parse_response(read_socket(socket));
+
+                    if (resp.code == static_cast<uint16_t> (Operation::RESP_MESSAGE_PROCCESED))
+                    {
+                        std::array<std::uint8_t, 16> t_uuid;
+                        std::copy(
+                            resp.payload.begin(),
+                            resp.payload.begin() + 16,
+                            t_uuid.begin()
+                        );
+
+                        uint32_t m_id = 0;
+                        std::memcpy(&m_id, resp.payload.data() + 16, sizeof(m_id));
+
+
+                        UUID n_uuid;
+                        std::copy(t_uuid.begin(), t_uuid.end(), n_uuid.id.begin());
+                        if (n_uuid != target_uuid)
+                        {
+                            std::cout << "ERROR: uuid received via reply from server doesn't match.";
+                            break;
+                        }
+                        std::cout << "Message with id " << m_id << " containg encrypted sym key to user "<< target_name <<" successfully received by server.";
+                    }
+                    else
+                    {
+                        std::cout << "Error Response from server." << std::endl;
+                    }
+                    break;
+
+
+
+
+                    break;
+                }
+                
                 default:
                 {
                     break;
