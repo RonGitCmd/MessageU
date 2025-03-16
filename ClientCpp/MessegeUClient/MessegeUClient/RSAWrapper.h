@@ -1,7 +1,7 @@
 #pragma once
 
-#include <CryptoPP/osrng.h>
-#include <CryptoPP/rsa.h>
+#include <cryptopp/osrng.h>
+#include <cryptopp/rsa.h>
 
 #include <string>
 

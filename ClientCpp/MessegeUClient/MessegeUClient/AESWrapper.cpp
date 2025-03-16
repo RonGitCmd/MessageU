@@ -1,8 +1,8 @@
 #include "AESWrapper.h"
 
-#include <CryptoPP/modes.h>
-#include <CryptoPP/aes.h>
-#include <CryptoPP/filters.h>
+#include <cryptopp/modes.h>
+#include <cryptopp/aes.h>
+#include <cryptopp/filters.h>
 
 #include <stdexcept>
 #include <immintrin.h>	// _rdrand32_step
@@ -24,14 +24,14 @@ AESWrapper::AESWrapper(const unsigned char* key, unsigned int length)
 {
 	if (length != DEFAULT_KEYLENGTH)
 		throw std::length_error("key length must be 16 bytes");
-	memcpy_s(_key, DEFAULT_KEYLENGTH, key, length);
+	std::memcpy(_key,  key, length);
 }
 AESWrapper::AESWrapper(const std::string& keyStr)
 {
 	if (keyStr.size() != DEFAULT_KEYLENGTH)
 		throw std::length_error("key length must be 16 bytes");
 
-	memcpy_s(_key, DEFAULT_KEYLENGTH, keyStr.data(), keyStr.size());
+	std::memcpy(_key,keyStr.data(), keyStr.size());
 }
 AESWrapper::~AESWrapper()
 {
