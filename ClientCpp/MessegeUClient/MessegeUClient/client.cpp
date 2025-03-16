@@ -265,7 +265,7 @@ int main()
                     if (resp.code == static_cast<uint16_t> (Operation::RESP_SUCSESS_REGISTER))
                     {
                         std::memcpy(uuid.id.data(), resp.payload.data(), 16);
-                        store_my_info(username, uuid, rsapriv->getPrivateKey());
+                        store_my_info(username.substr(0, 254), uuid, rsapriv->getPrivateKey());
                         std::cout << "Successfully registered with server." << std::endl;
 
                     }
@@ -432,52 +432,53 @@ int main()
 
 
                                 }
-                            case MessageTypes::SEND_FILE: //received a file
-
-                                if (AesList.find(pulled_messages[i].source_uuid) == AesList.end())//target public key is not saved.
+                                case MessageTypes::SEND_FILE: //received a file
                                 {
-                                    std::cout << "ERROR: client " << clientName << " symmetric key was not found. Please request it." << std::endl;
-                                    break;
-                                }
-
-                                try {
-                                    // Decrypt the received file content.
-                                    std::string decrypted_file = AesList[pulled_messages[i].source_uuid]->decrypt(
-                                        reinterpret_cast<const char*>(pulled_messages[i].content.data()),
-                                        static_cast<unsigned int>(pulled_messages[i].content.size())
-                                    );
-
-                                    // Retrieve the temporary directory using _dupenv_s
-                                    char* tmp_dir = nullptr;
-                                    size_t len = 0;
-                                    if (_dupenv_s(&tmp_dir, &len, "TMP") != 0 || tmp_dir == nullptr)
+                                    if (AesList.find(pulled_messages[i].source_uuid) == AesList.end())//target public key is not saved.
                                     {
-                                        if (_dupenv_s(&tmp_dir, &len, "TEMP") != 0 || tmp_dir == nullptr)
-                                        {
-                                            std::cout << "ERROR: Unable to retrieve temporary directory." << std::endl;
-                                            break;
-                                        }
-                                    }
-                                    // Construct a unique file name using the message_id.
-                                    // Assuming pulled_messages[i].message_id is an integer.
-                                    std::string file_path = std::string(tmp_dir) + "\\received_file_"
-                                        + std::to_string(pulled_messages[i].message_id);
-
-                                    // Write the decrypted file data to the file.
-                                    std::ofstream outfile(file_path, std::ios::binary);
-                                    if (!outfile) {
-                                        std::cout << "ERROR: Unable to create file at " << file_path << std::endl;
+                                        std::cout << "ERROR: client " << clientName << " symmetric key was not found. Please request it." << std::endl;
                                         break;
                                     }
-                                    outfile.write(decrypted_file.data(), decrypted_file.size());
-                                    outfile.close();
 
-                                    std::cout << "File received and saved as: " << file_path << std::endl;
+                                    try {
+                                        // Decrypt the received file content.
+                                        std::string decrypted_file = AesList[pulled_messages[i].source_uuid]->decrypt(
+                                            reinterpret_cast<const char*>(pulled_messages[i].content.data()),
+                                            static_cast<unsigned int>(pulled_messages[i].content.size())
+                                        );
+
+                                        // Retrieve the temporary directory using _dupenv_s
+                                        char* tmp_dir = nullptr;
+                                        size_t len = 0;
+                                        if (_dupenv_s(&tmp_dir, &len, "TMP") != 0 || tmp_dir == nullptr)
+                                        {
+                                            if (_dupenv_s(&tmp_dir, &len, "TEMP") != 0 || tmp_dir == nullptr)
+                                            {
+                                                std::cout << "ERROR: Unable to retrieve temporary directory." << std::endl;
+                                                break;
+                                            }
+                                        }
+                                        // Construct a unique file name using the message_id.
+                                        // Assuming pulled_messages[i].message_id is an integer.
+                                        std::string file_path = std::string(tmp_dir) + "\\received_file_"
+                                            + std::to_string(pulled_messages[i].message_id);
+
+                                        // Write the decrypted file data to the file.
+                                        std::ofstream outfile(file_path, std::ios::binary);
+                                        if (!outfile) {
+                                            std::cout << "ERROR: Unable to create file at " << file_path << std::endl;
+                                            break;
+                                        }
+                                        outfile.write(decrypted_file.data(), decrypted_file.size());
+                                        outfile.close();
+
+                                        std::cout << "File received and saved as: " << file_path << std::endl;
+                                    }
+                                    catch (const std::exception& e) {
+                                        std::cout << "Exception while processing file: " << e.what() << std::endl;
+                                    }
+                                    break;
                                 }
-                                catch (const std::exception& e) {
-                                    std::cout << "Exception while processing file: " << e.what() << std::endl;
-                                }
-                                break;
                             }
 
                             std::cout << "." << std::endl << "." << std::endl << "-----<EOM>-----" << std::endl << "\\n" << std::endl;

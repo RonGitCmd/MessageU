@@ -2,6 +2,7 @@
 #include<string>
 #include<array>
 #include<map>
+
 #ifndef PROTOCOL_TOOLS_H
 #define PROTOCOL_TOOLS_H
 // Enum for Operations (Op)

@@ -48,11 +48,7 @@ bool UUID::operator!=(const UUID& other) const
 
 bool  UUID::operator <(const UUID& other) const
 {
-    return id < other.id;
-    // C++20: std::array has built-in operator< for lexicographic comparison
-    // For older compilers, you could use:
-    // return std::lexicographical_compare(id.begin(), id.end(),
-    //                                     other.id.begin(), other.id.end());
+    return std::lexicographical_compare(id.begin(), id.end(), other.id.begin(), other.id.end());
 }
 
 
@@ -63,28 +59,27 @@ std::vector<uint8_t> construct_request(const Request& req)
 {
     std::vector<uint8_t> raw_data;
 
-    // 1) Insert 16 bytes of the UUID (raw data, no endianness conversion for IDs).
+    //UUID
     raw_data.insert(raw_data.end(), req.user_id.id.begin(), req.user_id.id.end());
 
-    // 2) Insert the single-byte version as-is (no endianness change).
+    //  Insert the single-byte version
     raw_data.push_back(req.version);
 
-    // 3) Convert req.code (uint16_t) from native to little-endian, then insert.
+    //  code 
     {
         uint16_t code_le = boost::endian::native_to_little(req.code);
         const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&code_le);
         raw_data.insert(raw_data.end(), ptr, ptr + sizeof(code_le));
     }
 
-    // 4) Convert req.size (uint32_t) from native to little-endian, then insert.
+    //  size of paylaod 
     {
         uint32_t size_le = boost::endian::native_to_little(req.size);
         const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&size_le);
         raw_data.insert(raw_data.end(), ptr, ptr + sizeof(size_le));
     }
 
-    // 5) If no additional fields, insert the payload as is.
-    //    Example: if the request code is REQ_GETCLIENT_LIST or REQ_PULLMESSAGES, maybe skip the payload.
+    // add payload if needed   
     if (req.code != static_cast<uint16_t>(Operation::REQ_GETCLIENT_LIST)
         && req.code != static_cast<uint16_t>(Operation::REQ_PULLMESAGES))
     {
@@ -100,13 +95,13 @@ Response parse_response(const std::vector<uint8_t>& raw_data)
     Response res;
     size_t offset = 0;
 
-    // 1) version is 1 byte, copy directly
+    //version is 1 byte, copy directly
     if (offset + sizeof(res.version) > raw_data.size())
         throw std::runtime_error("Not enough bytes for version");
     std::memcpy(&res.version, &raw_data[offset], sizeof(res.version));
     offset += sizeof(res.version);
 
-    // 2) code is a 16-bit little-endian
+    //code is 16-bit little-endian
     {
         if (offset + sizeof(res.code) > raw_data.size())
             throw std::runtime_error("Not enough bytes for code");
@@ -116,7 +111,7 @@ Response parse_response(const std::vector<uint8_t>& raw_data)
         res.code = boost::endian::little_to_native(code_le);
     }
 
-    // 3) size is a 32-bit little-endian
+    // 3) size is a 32-bit
     {
         if (offset + sizeof(res.size) > raw_data.size())
             throw std::runtime_error("Not enough bytes for size");
@@ -126,7 +121,7 @@ Response parse_response(const std::vector<uint8_t>& raw_data)
         res.size = boost::endian::little_to_native(size_le);
     }
 
-    // 4) The rest is payload
+    // payload
     if (offset > raw_data.size())
         throw std::runtime_error("Offset out of range after reading header");
     res.payload.insert(res.payload.end(), raw_data.begin() + offset, raw_data.end());
@@ -152,7 +147,6 @@ std::map<std::string, UUID> extractClientMap(const std::vector<uint8_t>& data) {
         std::copy(recordStart, recordStart + 16, uuid.id.begin());
 
         // Extract username: next 255 bytes.
-        // We treat the username bytes as a C-string, stopping at the first null terminator.
         const char* usernamePtr = reinterpret_cast<const char*>(recordStart + 16);
         std::string username(usernamePtr, 255);
         size_t pos = username.find('\0');

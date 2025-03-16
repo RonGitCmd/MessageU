@@ -132,7 +132,6 @@ class DB:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        # Query to get all clients whose ID (a BLOB) does not match the given uuid.
         query = "SELECT ID, UserName FROM clients WHERE ID != ?"
         cursor.execute(query, (sqlite3.Binary(uuid),))
 
@@ -148,7 +147,6 @@ class DB:
             if len(client_id) != 16:
                 raise ValueError("Client ID must be exactly 16 bytes")
 
-            # Convert username to bytes using UTF-8 encoding.
             username_bytes = username.encode("utf-8")
 
             #Ensure the username part is exactly 255 bytes:
@@ -199,13 +197,7 @@ class DB:
         conn.close()
 
 
-        # Each row: (ID, ToClient, FromClient, Type, Content)
-        # We need a bytes object with:
-        #  16 bytes: FromClient
-        #   4 bytes: message_id
-        #   1 byte : message_type
-        #   4 bytes: content_size
-        #   content_size bytes: content
+
         result_chunks = []
 
         for row in rows:
