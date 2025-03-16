@@ -72,7 +72,7 @@ struct ClientMessage {
     uint32_t message_id;
     MessageTypes message_type;
     uint32_t message_size;
-    std::string content;
+    std::vector<uint8_t> content;
 };
 
 Response parse_response(const std::vector<uint8_t>& raw_data);

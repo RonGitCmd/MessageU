@@ -186,9 +186,18 @@ class DB:
             FROM messages
             WHERE ToClient = ?
         """, (sqlite3.Binary(uuid),))
-
         rows = cursor.fetchall()
+        #query to delete said messages
+        cursor.execute("""
+             DELETE FROM messages
+             WHERE ToClient = ?
+         """, (sqlite3.Binary(uuid),))
+
+
+        conn.commit()
+
         conn.close()
+
 
         # Each row: (ID, ToClient, FromClient, Type, Content)
         # We need a bytes object with:

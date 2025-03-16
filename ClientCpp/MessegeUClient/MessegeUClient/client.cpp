@@ -10,12 +10,14 @@
 #include "AESWrapper.h"
 #include "RSAWrapper.h"
 #include <string>
+#include <boost/endian/conversion.hpp> 
+
 #include <map>
 namespace fs = std::filesystem;
 namespace asio = boost::asio;
 using asio::ip::tcp;
-const uint8_t VERSION = 1;
-const std::string MY_INFO = (fs::current_path().u8string() + "\\my.info");
+const uint8_t VERSION = 2;
+const std::string MY_INFO = (fs::current_path().u8string() + "\\me.info");
 const std::string SERVER_INFO = (fs::current_path().u8string() + "\\server.info");
 
 
@@ -203,12 +205,13 @@ int main()
         while (true)
         {
             std::cout << std::endl << "110) Register" << std::endl;
-            std::cout << "120) Request for clietns list" << std::endl;
+            std::cout << "120) Request for clients list" << std::endl;
             std::cout << "130) Request for public key" << std::endl;
             std::cout << "140) Request for waiting messages" << std::endl;
             std::cout << "150) Send a text message  " << std::endl;
             std::cout << "151) Send a request for symetric key  " << std::endl;
             std::cout << "152) Send your symmetric key" << std::endl;
+            std::cout << "153) Send a file" << std::endl;
             std::cout << "  0) Exit client" << std::endl << "?";
             int userinput;
             std::cin >> userinput;
@@ -385,37 +388,102 @@ int main()
                             switch (pulled_messages[i].message_type)
                             {
                                 case MessageTypes::REQ_SYM://received a request for a symetric key
+                                {    
+                                    std::cout << "Request for symmetric key." << std::endl;
                                     break;
+                                }
                                 case MessageTypes::SEND_SYM://received a symetric key
-                                    
+                                {
                                     try {
 
                                         std::string decrypted_key = rsapriv->decrypt(vecuint8ToString(pulled_messages[i].content));
                                         AesList[pulled_messages[i].source_uuid] = std::make_unique<AESWrapper>(decrypted_key);
-                                        std::cout << "symmetric key received."<<std::endl;
+                                        std::cout << "symmetric key received." << std::endl;
                                     }
                                     catch (std::exception e)
                                     {
                                         std::cout << (e.what()) << std::endl;
                                     }
-                                    
-                                    break;
 
+                                    break;
+                                }
                                 case MessageTypes::SEND_TEXT_MESSAGE://received a text msg
+                                {
+                                    if (AesList.find(pulled_messages[i].source_uuid) == AesList.end())//target public key is not saved.
+                                    {
+                                        std::cout << "ERROR: client " << clientName << " symmetric key was not found. Please request it." << std::endl;
+                                        break;
+                                    }
+                                    std::string decrypted_message = AesList[pulled_messages[i].source_uuid]->decrypt(
+                                        reinterpret_cast<const char*>(pulled_messages[i].content.data()),
+                                        static_cast<unsigned int>(pulled_messages[i].content.size()));
 
-                                    //add decryption using a sym key
-                                    std::cout << vecuint8ToString (pulled_messages[i].content)<<std::endl;
-
+                                    try {
+                                        std::string decrypted_message = AesList[pulled_messages[i].source_uuid]->decrypt(
+                                            reinterpret_cast<const char*>(pulled_messages[i].content.data()),
+                                            static_cast<unsigned int>(pulled_messages[i].content.size()));
+                                            std::cout << decrypted_message << std::endl;
+                                    }
+                                    catch (const std::exception& e) {
+                                        std::cout << "Exception while processing file: " << e.what() << std::endl;
+                                    }
                                     break;
 
-                                case MessageTypes::SEND_FILE: //received a file
+
+
+                                }
+                            case MessageTypes::SEND_FILE: //received a file
+
+                                if (AesList.find(pulled_messages[i].source_uuid) == AesList.end())//target public key is not saved.
+                                {
+                                    std::cout << "ERROR: client " << clientName << " symmetric key was not found. Please request it." << std::endl;
                                     break;
+                                }
+
+                                try {
+                                    // Decrypt the received file content.
+                                    std::string decrypted_file = AesList[pulled_messages[i].source_uuid]->decrypt(
+                                        reinterpret_cast<const char*>(pulled_messages[i].content.data()),
+                                        static_cast<unsigned int>(pulled_messages[i].content.size())
+                                    );
+
+                                    // Retrieve the temporary directory using _dupenv_s
+                                    char* tmp_dir = nullptr;
+                                    size_t len = 0;
+                                    if (_dupenv_s(&tmp_dir, &len, "TMP") != 0 || tmp_dir == nullptr)
+                                    {
+                                        if (_dupenv_s(&tmp_dir, &len, "TEMP") != 0 || tmp_dir == nullptr)
+                                        {
+                                            std::cout << "ERROR: Unable to retrieve temporary directory." << std::endl;
+                                            break;
+                                        }
+                                    }
+                                    // Construct a unique file name using the message_id.
+                                    // Assuming pulled_messages[i].message_id is an integer.
+                                    std::string file_path = std::string(tmp_dir) + "\\received_file_"
+                                        + std::to_string(pulled_messages[i].message_id);
+
+                                    // Write the decrypted file data to the file.
+                                    std::ofstream outfile(file_path, std::ios::binary);
+                                    if (!outfile) {
+                                        std::cout << "ERROR: Unable to create file at " << file_path << std::endl;
+                                        break;
+                                    }
+                                    outfile.write(decrypted_file.data(), decrypted_file.size());
+                                    outfile.close();
+
+                                    std::cout << "File received and saved as: " << file_path << std::endl;
+                                }
+                                catch (const std::exception& e) {
+                                    std::cout << "Exception while processing file: " << e.what() << std::endl;
+                                }
+                                break;
                             }
 
                             std::cout << "." << std::endl << "." << std::endl << "-----<EOM>-----" << std::endl << "\\n" << std::endl;
-
                         }
                     }
+                    
                     else
                     {
                         std::cout << "Error Response from server." << std::endl;
@@ -447,6 +515,13 @@ int main()
                     std::cin.clear();
 
                     std::getline(std::cin, text_message);
+                    if (AesList.find(target_uuid) == AesList.end())//target public key is not saved.
+                    {
+                        std::cout << "ERROR: client " << target_name << " symmetric key was not found. Please request it." << std::endl;
+                        break;
+                    }
+                     
+                    std::string encrypted_message = AesList[target_uuid]->encrypt(text_message.c_str(), static_cast<unsigned int>(text_message.size()));
 
                     Request req;
                     req.code = static_cast<uint16_t>(Operation::REQ_SENDCLIENT_MESSAGE);
@@ -454,12 +529,14 @@ int main()
                     req.user_id = uuid;
                     req.payload.insert(req.payload.begin(), target_uuid.id.begin(), target_uuid.id.end());
                     req.payload.push_back(static_cast<uint8_t> (MessageTypes::SEND_TEXT_MESSAGE));
-                    uint32_t text_len = static_cast<uint32_t>(text_message.size());
-                    const uint8_t* length_ptr = reinterpret_cast<const uint8_t*>(&text_len);
-                    req.payload.insert(req.payload.end(), length_ptr, length_ptr + sizeof(text_len));
+                    
+                    uint32_t size_le = boost::endian::native_to_little(encrypted_message.size());//get message conent size
+                    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&size_le);
+                    req.payload.insert(req.payload.end(), ptr, ptr + sizeof(size_le));
+                    
 
                     // Finally, append the actual message bytes.
-                    req.payload.insert(req.payload.end(), text_message.begin(), text_message.end());
+                    req.payload.insert(req.payload.end(), encrypted_message.begin(), encrypted_message.end());
 
                     req.size = req.payload.size();
                     socket.send(boost::asio::buffer(construct_request(req)));
@@ -485,7 +562,7 @@ int main()
                             std::cout << "ERROR: uuid received via reply from server doesn't match.";
                             break;
                         }
-                        std::cout << "Message with id " << m_id << " successfully received by server";
+                        std::cout << "Message with id " << m_id << " containg encrypted message successfully received by server";
                         }
                     else
                     {
@@ -495,9 +572,65 @@ int main()
 
                 }
 
-                case 151:
+                case 151://request aes key
                 {
+                    std::cout << "Enter Client whose symmetric key is requested: ";
+                    std::string target_name;
+                    std::cin.clear();
+                    std::cin.get(); // this will consume the newline
+                    std::getline(std::cin, target_name);
+                    UUID target_uuid;
+                    if (nameToUUID.find(target_name) != nameToUUID.end())//Target name is found in the client lis
+                        target_uuid = nameToUUID[target_name];
+                    else
+                    {
+                        std::cout << "ERROR: Client name entered is not found." << std::endl;
+                        break;// if name is not found exit the case
+                    }
+
+                    Request req;
+                    req.code = static_cast<uint16_t>(Operation::REQ_SENDCLIENT_MESSAGE);
+                    req.version = VERSION;
+                    req.user_id = uuid;
+                    req.payload.insert(req.payload.begin(), target_uuid.id.begin(), target_uuid.id.end());//add UUID
+                    req.payload.push_back(static_cast<uint8_t> (MessageTypes::REQ_SYM));//Add messagetype
+                    size_t contentsize = 0;
+                    uint32_t size_le = boost::endian::native_to_little(contentsize);// conent is empty
+                    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&size_le);
+                    req.payload.insert(req.payload.end(), ptr, ptr + sizeof(size_le));
+
+                    socket.send(boost::asio::buffer(construct_request(req)));
+                    Response resp = parse_response(read_socket(socket));
+
+                    if (resp.code == static_cast<uint16_t> (Operation::RESP_MESSAGE_PROCCESED))
+                    {
+                        std::array<std::uint8_t, 16> t_uuid;
+                        std::copy(
+                            resp.payload.begin(),
+                            resp.payload.begin() + 16,
+                            t_uuid.begin()
+                        );
+
+                        uint32_t m_id = 0;
+                        std::memcpy(&m_id, resp.payload.data() + 16, sizeof(m_id));
+
+
+                        UUID n_uuid;
+                        std::copy(t_uuid.begin(), t_uuid.end(), n_uuid.id.begin());
+                        if (n_uuid != target_uuid)
+                        {
+                            std::cout << "ERROR: uuid received via reply from server doesn't match.";
+                            break;
+                        }
+                        std::cout << "Message with id " << m_id << " containg requst from sym key to user " << target_name << " successfully received by server.";
+                    }
+                    else
+                    {
+                        std::cout << "Error Response from server." << std::endl;
+                    }
+
                     break;
+                
                 }
 
                 case 152:// send aes key
@@ -531,12 +664,15 @@ int main()
                     std::string pkey = UUIDPublicKey[target_uuid]->getPublicKey();
                     std::string aeskey(reinterpret_cast<const char*>(AesList[target_uuid]->getKey()),AESWrapper::DEFAULT_KEYLENGTH);
                     std::string encryptedAesKey = (UUIDPublicKey[target_uuid]->encrypt(aeskey));
-                    std::cout << target_name << "was sent aes key: " << encryptedAesKey << std::endl;
+                    std::cout << target_name << " was sent aes key"  << std::endl;
                     req.payload.insert(req.payload.begin(), target_uuid.id.begin(), target_uuid.id.end());//add UUID
                     req.payload.push_back(static_cast<uint8_t> (MessageTypes::SEND_SYM));//Add messagetype
-                    uint32_t aes_len = static_cast<uint32_t>(encryptedAesKey.size());
-                    const uint8_t* length_ptr = reinterpret_cast<const uint8_t*>(&aes_len);
-                    req.payload.insert(req.payload.end(), length_ptr,length_ptr + sizeof(aes_len));//add key size( size)
+
+                    uint32_t size_le = boost::endian::native_to_little(encryptedAesKey.size());//get message conent size
+                    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&size_le);
+                    req.payload.insert(req.payload.end(), ptr, ptr + sizeof(size_le));
+
+
                     req.payload.insert(req.payload.end(), encryptedAesKey.begin(), encryptedAesKey.end());//add key (content)
                     req.size = req.payload.size();
                     socket.send(boost::asio::buffer(construct_request(req)));
@@ -569,13 +705,106 @@ int main()
                         std::cout << "Error Response from server." << std::endl;
                     }
                     break;
+                }
+
+                case 153:// send file
+                {
+                    std::cout << "Enter recipient name: ";
+                    std::string target_name;
+                    std::cin.clear();
+                    std::cin.get(); // this will consume the newline
+                    std::getline(std::cin, target_name);
+                    UUID target_uuid;
+                    if (nameToUUID.find(target_name) != nameToUUID.end())//Target name is found in the client lis
+                        target_uuid = nameToUUID[target_name];
+                    else
+                    {
+                        std::cout << "ERROR: Client name entered is not found." << std::endl;
+                        break;// if name is not found exit the case
+                    }
+
+                    if (AesList.find(target_uuid) == AesList.end())//target public key is not saved.
+                    {
+                        std::cout << "ERROR: client " << target_name << " symmetric key was not found. Please request it." << std::endl;
+                        break;
+                    }
+
+                    std::cout << "Enter File path: ";
+                    std::string fpath;
+                    std::cin.clear();
+
+                    std::getline(std::cin, fpath);
+                    
+                    if (!std::filesystem::exists(fpath))
+                    {
+                        std::cout << "ERROR: File at path \"" << fpath << "\" does not exist." << std::endl;
+                        break;
+                    }
+
+                    std::ifstream file(fpath, std::ios::binary);
+                    if (!file) {
+                        std::cout << "ERROR: Cannot open file at path \"" << fpath << "\"." << std::endl;
+                        break;
+                    }
+                    std::vector<uint8_t> file_data((std::istreambuf_iterator<char>(file)),
+                        std::istreambuf_iterator<char>());
+                    file.close();
+
+                    std::string encrypted_file = AesList[target_uuid]->encrypt(
+                        reinterpret_cast<const char*>(file_data.data()),
+                        static_cast<unsigned int>(file_data.size())
+                    );
+
+                    Request req;
+                    req.code = static_cast<uint16_t>(Operation::REQ_SENDCLIENT_MESSAGE);
+                    req.version = VERSION;
+                    req.user_id = uuid;
+                    req.payload.insert(req.payload.begin(), target_uuid.id.begin(), target_uuid.id.end());
+                    req.payload.push_back(static_cast<uint8_t> (MessageTypes::SEND_FILE));
+
+                    uint32_t size_le = boost::endian::native_to_little(encrypted_file.size());//get message conent size
+                    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&size_le);
+                    req.payload.insert(req.payload.end(), ptr, ptr + sizeof(size_le));
 
 
+                    // Finally, append the actual message bytes.
+                    req.payload.insert(req.payload.end(), encrypted_file.begin(), encrypted_file.end());
 
+                    req.size = req.payload.size();
+                    socket.send(boost::asio::buffer(construct_request(req)));
+                    Response resp = parse_response(read_socket(socket));
+
+                    if (resp.code == static_cast<uint16_t> (Operation::RESP_MESSAGE_PROCCESED))
+                    {
+                        std::array<std::uint8_t, 16> t_uuid;
+                        std::copy(
+                            resp.payload.begin(),
+                            resp.payload.begin() + 16,
+                            t_uuid.begin()
+                        );
+
+                        uint32_t m_id = 0;
+                        std::memcpy(&m_id, resp.payload.data() + 16, sizeof(m_id));
+
+
+                        UUID n_uuid;
+                        std::copy(t_uuid.begin(), t_uuid.end(), n_uuid.id.begin());
+                        if (n_uuid != target_uuid)
+                        {
+                            std::cout << "ERROR: uuid received via reply from server doesn't match.";
+                            break;
+                        }
+                        std::cout << "Message with id " << m_id << " containing file located at path \"" << fpath << "\"successfully received by server";
+                    }
+                    else
+                    {
+                        std::cout << "Error Response from server." << std::endl;
+                    }
+                    break;
 
                     break;
                 }
-                
+
                 default:
                 {
                     break;

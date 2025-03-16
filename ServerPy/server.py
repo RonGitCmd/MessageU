@@ -11,6 +11,7 @@ from database import DB
 
 DEFAULT_PORT = 1357
 PORT_FILE = "myport.info"
+VERSION = 2
 
 def get_port():
     """
@@ -35,7 +36,6 @@ def get_port():
         # ValueError means invalid integer; OSError means file read error
         print(f"Invalid or unreadable content in '{PORT_FILE}'. Using default port {DEFAULT_PORT}.")
         return DEFAULT_PORT
-VERSION = 2
 
 def gen_uuid()->bytes:
     return os.urandom(16)
